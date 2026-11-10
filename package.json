@@ -1,0 +1,13 @@
+{
+  "name": "apuracao-cbs-cliente",
+  "version": "1.0.0",
+  "description": "Cliente simples da API de Apuração CBS (Receita Federal) com webhook. Credenciais só em memória.",
+  "type": "module",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

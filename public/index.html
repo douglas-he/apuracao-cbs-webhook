@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apuração CBS</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --tx:#1d2330; --mut:#5d6575; --bd:#d9dde4; --pri:#1351b4; --ok:#168821; --err:#c62828; --warn:#a15c00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14171c; --card:#1d2129; --tx:#e6e9ef; --mut:#9aa3b2; --bd:#323846; --pri:#5b9bff; --ok:#4cc35a; --err:#ff6b6b; --warn:#f0a83a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--tx); }
+  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { color: var(--mut); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--bd); border-radius: 10px; padding: 18px; margin-bottom: 18px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 13px; color: var(--mut); margin-bottom: 4px; }
+  input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--bd); border-radius: 6px; background: var(--bg); color: var(--tx); font: inherit; }
+  .full { grid-column: 1 / -1; }
+  .hint { font-size: 12px; color: var(--mut); margin-top: 4px; }
+  button { background: var(--pri); color: #fff; border: 0; border-radius: 6px; padding: 9px 16px; font: inherit; cursor: pointer; }
+  button.sec { background: transparent; color: var(--pri); border: 1px solid var(--bd); padding: 6px 12px; font-size: 13px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .msg { margin-top: 12px; font-size: 14px; }
+  .msg.err { color: var(--err); }
+  .sol h3 { margin: 0 0 6px; font-size: 16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; }
+  .s-BAIXADO, .s-CONCLUIDA { color: var(--ok); } .s-ERRO, .s-EXPIRADA { color: var(--err); } .s-PENDENTE, .s-EM_PROCESSAMENTO { color: var(--warn); }
+  .meta { font-size: 13px; color: var(--mut); word-break: break-all; }
+  ol { margin: 10px 0 0; padding-left: 18px; font-size: 13px; }
+  ol li { margin-bottom: 4px; word-break: break-word; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .s-FALHOU { color: var(--err); }
+  .falha { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--err); background: color-mix(in srgb, var(--err) 8%, transparent); font-size: 13px; border-radius: 4px; word-break: break-word; }
+  .falha b { color: var(--err); }
+  li.n-ERRO { color: var(--err); } li.n-AVISO { color: var(--warn); }
+  ol code { font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Apuração CBS — Receita Federal</h1>
+  <p class="sub">client_id e client_secret ficam só na memória do servidor local e são apagados ao fim da solicitação. Nada é gravado.</p>
+
+  <form class="card" id="f" autocomplete="off">
+    <div class="grid">
+      <div><label for="clientId">client_id</label><input id="clientId" required autocomplete="off" spellcheck="false"></div>
+      <div><label for="clientSecret">client_secret</label><input id="clientSecret" type="password" required autocomplete="new-password"></div>
+      <div><label for="ambiente">Ambiente</label><select id="ambiente"></select></div>
+      <div><label for="api">Consulta</label><select id="api"></select></div>
+      <div><label for="cnpj">CNPJ da matriz</label><input id="cnpj" required placeholder="00.000.000/0001-00 ou 8 dígitos" inputmode="numeric">
+        <div class="hint">Só os 8 primeiros dígitos (CNPJ base) são enviados.</div></div>
+      <div><label for="urlPublica">URL pública HTTPS do webhook</label><input id="urlPublica" required placeholder="https://xxxx.trycloudflare.com">
+        <div class="hint" id="hintWh"></div></div>
+    </div>
+    <div class="row"><button id="btn">Solicitar à Receita</button></div>
+    <div class="msg" id="msg"></div>
+  </form>
+
+  <section id="lista"></section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let cfg;
+
+async function init() {
+  cfg = await (await fetch('/api/config')).json();
+  $('ambiente').innerHTML = Object.entries(cfg.ambientes).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  $('api').innerHTML = cfg.apis.map((a) => `<option>${a}</option>`).join('');
+  $('hintWh').textContent = `O caminho ${cfg.webhookPath} é adicionado se faltar. O túnel deve apontar para a porta ${cfg.webhookPort}.`;
+  try { $('urlPublica').value = localStorage.getItem('urlPublica') || ''; } catch {}
+  atualizar(); setInterval(atualizar, 3000);
+}
+
+$('f').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const btn = $('btn'), msg = $('msg');
+  btn.disabled = true; msg.className = 'msg'; msg.textContent = 'Obtendo token e abrindo solicitação…';
+  try { localStorage.setItem('urlPublica', $('urlPublica').value); } catch {}
+  try {
+    const r = await fetch('/api/solicitar', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId: $('clientId').value, clientSecret: $('clientSecret').value,
+        ambiente: $('ambiente').value, api: $('api').value,
+        cnpj: $('cnpj').value, urlPublica: $('urlPublica').value,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.etapa ? `Parou na etapa ${d.etapa} — ${d.erro}` : (d.erro || r.statusText));
+    msg.textContent = `Solicitação aberta: ${d.ticket}. Aguardando o webhook da Receita.`;
+    atualizar();
+  } catch (e) {
+    msg.className = 'msg err'; msg.textContent = e.message;
+  } finally {
+    // Limpa o segredo do formulário.
+    $('clientSecret').value = '';
+    btn.disabled = false;
+  }
+});
+
+async function acao(tipo, ticket) {
+  const r = await fetch(`/api/${tipo}/${encodeURIComponent(ticket)}`, { method: 'POST' });
+  if (!r.ok) { const d = await r.json(); alert(d.etapa ? `Parou na etapa ${d.etapa}\n${d.erro}` : d.erro); }
+  atualizar();
+}
+
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+async function atualizar() {
+  const lista = await (await fetch('/api/solicitacoes')).json();
+  $('lista').innerHTML = lista.map((s) => `
+    <div class="card sol">
+      <h3>${esc(s.id)} · ${esc(s.api)} · ${esc(s.cnpj)} <span class="tag s-${esc(s.situacao)}">${esc(s.situacao)}</span></h3>
+      <div class="meta">Tíquete: <code>${esc(s.ticket || '—')}</code> · ${esc(cfg.ambientes[s.ambiente])}<br>
+        Etapa atual: <b>${esc(s.etapa || '—')}</b><br>
+        Webhook: <code>${esc(s.urlRetorno)}</code><br>
+        Credenciais em memória: ${s.credenciaisEmMemoria ? 'sim' : 'não'}
+        ${s.arquivo ? `<br>Arquivo: <code>${esc(s.arquivo)}</code>` : ''}</div>
+      ${s.credenciaisEmMemoria ? `<div class="row">
+        ${s.ticket ? `<button class="sec" onclick="acao('situacao','${esc(s.id)}')">Consultar situação agora</button>` : ''}
+        <button class="sec" onclick="acao('descartar','${esc(s.id)}')">Descartar credenciais</button></div>` : ''}
+      ${s.falha ? `<div class="falha"><b>Parou na etapa ${esc(s.falha.etapa)}</b>
+        ${s.falha.rota ? `<br>Rota da Receita: <code>${esc(s.falha.rota)}</code>` : ''}
+        ${s.falha.status ? `<br>HTTP ${esc(s.falha.status)}` : ''}<br>${esc(s.falha.mensagem)}</div>` : ''}
+      <ol>${s.eventos.map((e) => `<li class="n-${esc(e.nivel)}"><span class="meta">${esc(e.em.slice(11,19))}</span> ${esc(e.msg)}</li>`).join('')}</ol>
+    </div>`).join('');
+}
+init();
+</script>
+</body>
+</html>
